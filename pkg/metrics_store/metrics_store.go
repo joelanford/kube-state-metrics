@@ -17,6 +17,10 @@ limitations under the License.
 package metricsstore
 
 import (
+	"bytes"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/common/expfmt"
 	"io"
 	"sync"
 
@@ -162,4 +166,54 @@ func (s *MetricsStore) WriteAll(w io.Writer) {
 			w.Write(metricFamilies[i])
 		}
 	}
+}
+
+var _ prometheus.Collector = &MetricsStore{}
+
+func (s *MetricsStore) Describe(ch chan<- *prometheus.Desc) {
+	prometheus.DescribeByCollect(s, ch)
+}
+
+func (s *MetricsStore) Collect(ch chan<- prometheus.Metric) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	buf := &bytes.Buffer{}
+	s.WriteAll(buf)
+
+	d := expfmt.NewDecoder(buf, expfmt.FmtText)
+	mf := dto.MetricFamily{}
+	if err := d.Decode(&mf); err != nil {
+		return
+	}
+
+	labelSet := map[string]struct{}{}
+	for _, m := range mf.Metric {
+		for _, lp := range m.Label {
+			labelSet[*lp.Name] = struct{}{}
+		}
+	}
+	labels := []string{}
+	for k := range labelSet {
+		labels = append(labels, k)
+	}
+
+	mDesc := prometheus.NewDesc(*mf.Name, *mf.Help, labels, prometheus.Labels{})
+	for _, m := range mf.Metric {
+		ch <- &prommetric{m:m, desc: mDesc}
+	}
+}
+
+type prommetric struct {
+	m *dto.Metric
+	desc *prometheus.Desc
+}
+
+func (m *prommetric) Write(out *dto.Metric) error {
+	*out = *m.m
+	return nil
+}
+
+func (m *prommetric) Desc() *prometheus.Desc {
+	return m.desc
 }
