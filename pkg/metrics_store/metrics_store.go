@@ -182,26 +182,29 @@ func (s *MetricsStore) Collect(ch chan<- prometheus.Metric) {
 	s.WriteAll(buf)
 
 	d := expfmt.NewDecoder(buf, expfmt.FmtText)
-	mf := dto.MetricFamily{}
-	if err := d.Decode(&mf); err != nil {
-		return
-	}
+	for {
+		mf := dto.MetricFamily{}
+		if err := d.Decode(&mf); err != nil {
+			return
+		}
 
-	labelSet := map[string]struct{}{}
-	for _, m := range mf.Metric {
-		for _, lp := range m.Label {
-			labelSet[*lp.Name] = struct{}{}
+		labelSet := map[string]struct{}{}
+		for _, m := range mf.Metric {
+			for _, lp := range m.Label {
+				labelSet[*lp.Name] = struct{}{}
+			}
+		}
+		labels := []string{}
+		for k := range labelSet {
+			labels = append(labels, k)
+		}
+
+		mDesc := prometheus.NewDesc(*mf.Name, *mf.Help, labels, prometheus.Labels{})
+		for _, m := range mf.Metric {
+			ch <- &prommetric{m:m, desc: mDesc}
 		}
 	}
-	labels := []string{}
-	for k := range labelSet {
-		labels = append(labels, k)
-	}
 
-	mDesc := prometheus.NewDesc(*mf.Name, *mf.Help, labels, prometheus.Labels{})
-	for _, m := range mf.Metric {
-		ch <- &prommetric{m:m, desc: mDesc}
-	}
 }
 
 type prommetric struct {
